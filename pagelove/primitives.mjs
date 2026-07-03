@@ -22,33 +22,6 @@ function stableStepSelector(el, parent) {
     } catch (e) {}
   }
 
-  /* Try class names (skip JS-injected utility classes) */
-  if (el.className && typeof el.className === "string") {
-    const classes = el.className.trim().split(/\s+/).filter(Boolean);
-    for (const cls of classes) {
-      const sel = `${tag}.${CSS.escape(cls)}`;
-      try {
-        if (parent.querySelectorAll(`:scope > ${sel}`).length === 1) return sel;
-      } catch (e) {}
-    }
-    /* Try combination of first two classes */
-    if (classes.length >= 2) {
-      const sel = `${tag}.${CSS.escape(classes[0])}.${CSS.escape(classes[1])}`;
-      try {
-        if (parent.querySelectorAll(`:scope > ${sel}`).length === 1) return sel;
-      } catch (e) {}
-    }
-  }
-
-  /* Try tag + role or data attributes */
-  const role = el.getAttribute("role");
-  if (role) {
-    const sel = `${tag}[role="${CSS.escape(role)}"]`;
-    try {
-      if (parent.querySelectorAll(`:scope > ${sel}`).length === 1) return sel;
-    } catch (e) {}
-  }
-
   /* Fallback: nth-child */
   const index = parent.children ? [].indexOf.call(parent.children, el) + 1 : 1;
   return `${tag}:nth-child(${index})`;
@@ -79,6 +52,7 @@ function generateSelector() {
     }
 
     return path.join(" > ");
+    f;
   } catch (error) {
     Debug.error(
       Debug.PRIMITIVES,
@@ -162,7 +136,7 @@ class MultipartMessage {
       throw new Error("HTTP Message not ok (status outside of 400-499 range)");
     if (!this.constructor.isMultipart(message)) {
       console.warn("HTTP Message is not multi-part");
-      return;
+      return null;
     }
 
     this.message = message;
