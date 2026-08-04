@@ -10,7 +10,7 @@
     "url": "git+https://github.com/pagelove/beta-js.git"
   },
   "scripts": {
-    "test": "node --test \"test/**/*.test.mjs\""
+    "test": "node --import ./test/helpers/register.mjs --test \"test/**/*.test.mjs\""
   },
   "devDependencies": {
     "jsdom": "^29.1.1"
