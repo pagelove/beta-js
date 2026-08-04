@@ -14,6 +14,16 @@
 
 import { Pagelove } from './debug.mjs';
 
+/**
+ * How long a pending echo stays eligible to suppress an incoming mutation.
+ *
+ * An entry is normally cleared when its request completes. This bound covers
+ * the case where it never does — a rejected fetch dispatches PLMethodStarted
+ * but no PLMethodCompleted — so an orphaned entry cannot suppress an unrelated
+ * mutation indefinitely.
+ */
+const ECHO_TTL_MS = 30000;
+
 class PageloveSSE {
     #source;
     #url;
@@ -70,19 +80,27 @@ class PageloveSSE {
         document.addEventListener('PLMethodStarted', (event) => {
             this.#pendingEchoes.push({
                 method: event.detail.method.toUpperCase(),
-                selector: event.detail.selector
+                selector: event.detail.selector,
+                at: Date.now()
             });
         });
 
+        // Clear the entry however the request ended — not only when it failed.
+        //
+        // The guard exists to stop an echo being applied on top of the change
+        // the write path already made locally, and that window closes once the
+        // request completes. The server deliberately does not stream a mutation
+        // back to the connection that caused it, so an entry that waits for its
+        // own echo to clear it waits forever — and a never-cleared entry then
+        // matches, and silently discards, the next mutation another client
+        // makes with the same method and selector.
         document.addEventListener('PLMethodCompleted', (event) => {
-            if (!event.detail.response.ok) {
-                const method = event.detail.method.toUpperCase();
-                const selector = event.detail.selector;
-                const idx = this.#pendingEchoes.findIndex(e =>
-                    e.method === method && e.selector === selector
-                );
-                if (idx !== -1) this.#pendingEchoes.splice(idx, 1);
-            }
+            const method = event.detail.method.toUpperCase();
+            const selector = event.detail.selector;
+            const idx = this.#pendingEchoes.findIndex(e =>
+                e.method === method && e.selector === selector
+            );
+            if (idx !== -1) this.#pendingEchoes.splice(idx, 1);
         });
     }
 
@@ -136,6 +154,12 @@ class PageloveSSE {
      */
     #apply(mutation) {
         const { method, selector, body } = mutation;
+
+        // Drop entries whose request never reported completion — a rejected
+        // fetch dispatches PLMethodStarted but never PLMethodCompleted — so an
+        // orphaned entry cannot suppress an unrelated mutation indefinitely.
+        const cutoff = Date.now() - ECHO_TTL_MS;
+        this.#pendingEchoes = this.#pendingEchoes.filter(e => e.at >= cutoff);
 
         // Check if this mutation is an echo of a local operation (before querySelector,
         // because local DELETEs remove the element before the echo arrives)
@@ -260,6 +284,6 @@ class PageloveSSE {
     }
 }
 
-export { PageloveSSE };
+export { PageloveSSE, ECHO_TTL_MS };
 
 const _instance = new PageloveSSE();
