@@ -272,7 +272,17 @@ class PLElement {
     return new Request(this.url, details);
   }
 
-  async #processRequest(request) {
+  /**
+   * Issue `request`, announcing the operation's start and completion.
+   *
+   * `finalize` — when given — performs the verb's own local DOM work and runs
+   * BEFORE completion is announced. That ordering is load-bearing: the SSE
+   * client keeps this write's echo suppressed only until PLMethodCompleted
+   * fires, so any DOM change made after that event could be applied twice if
+   * the server echoes the write back to the connection that made it. Its
+   * return value, when it returns one, becomes this method's result.
+   */
+  async #processRequest(request, finalize) {
     const range = request.headers.get("Range");
     const selector = range ? range.replace("selector=", "") : "";
     this.element.dispatchEvent(
@@ -285,22 +295,40 @@ class PLElement {
     const response = await fetch(request);
     const etag = response.headers.get("etag");
     if (etag) this.element.etag = etag;
-    this.element.dispatchEvent(
-      new CustomEvent("PLMethodCompleted", {
-        detail: {
-          method: request.method,
-          selector,
-          response,
-        },
-        bubbles: true,
-        composed: true,
-        cancelable: true,
-      }),
-    );
-    return response;
+
+    let result = response;
+    try {
+      if (finalize) {
+        const finalized = await finalize(response);
+        if (finalized !== undefined) result = finalized;
+      }
+    } finally {
+      // Announced in a finally so that a finalize that throws — an unreadable
+      // or malformed response body, say — still ends the operation. Otherwise
+      // the entry PLMethodStarted added to the SSE echo-suppression queue is
+      // orphaned, and goes on discarding matching mutations until it ages out.
+      // The error itself still propagates to the caller.
+      this.element.dispatchEvent(
+        new CustomEvent("PLMethodCompleted", {
+          detail: {
+            method: request.method,
+            selector,
+            response,
+          },
+          bubbles: true,
+          composed: true,
+          cancelable: true,
+        }),
+      );
+    }
+    return result;
   }
 
   async DELETE() {
+    // The removal below needs no `finalize` hook: there is no await between
+    // this call resolving and `.remove()`, so no event can be delivered in
+    // between and the DOM change cannot race the completion announcement.
+    // Introducing an await here would reopen that window — see #processRequest.
     const response = await this.#processRequest(this.req("DELETE"));
     if (response.ok) this.element.remove();
     else {
@@ -317,8 +345,10 @@ class PLElement {
     const originalNode = body instanceof Node ? body : null;
     const alreadyAttached = originalNode && originalNode.parentNode;
     if (body instanceof Node) body = serializeForRequest(body);
-    const response = await this.#processRequest(this.req("POST", { body }));
-    if (response.ok) {
+    // The append happens inside finalize so that it is done before
+    // PLMethodCompleted is announced — see #processRequest.
+    return await this.#processRequest(this.req("POST", { body }), async (response) => {
+      if (!response.ok) return response;
       const responseText = await response.text();
       const newChild = htmlToNode(responseText);
       if (!alreadyAttached) this.#element.appendChild(newChild);
@@ -365,8 +395,7 @@ class PLElement {
         this.#element.etag = undefined;
       }
       return new Response(responseText, response);
-    }
-    return response;
+    });
   }
 
   async PUT(body) {
