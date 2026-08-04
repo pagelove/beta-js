@@ -84,6 +84,35 @@ test('POST returns a response whose body is still readable by the caller', async
     assert.match(await response.text(), /id="added"/);
 });
 
+test('a POST whose body cannot be read still reports completion', async () => {
+    // finalize runs before the completion event, so anything it throws would
+    // skip that event entirely — leaving the entry PLMethodStarted put in the
+    // SSE echo-suppression queue orphaned, and eligible to discard an
+    // unrelated mutation until it ages out.
+    const unreadable = {
+        ok: true,
+        status: 201,
+        headers: new Headers({ ETag: '"abc123"' }),
+        text: () => Promise.reject(new Error('body stream truncated')),
+    };
+
+    const { document, mod } = await setupPrimitives('<ul id="list"></ul>', () => unreadable);
+
+    let completed = false;
+    document.addEventListener('PLMethodCompleted', () => { completed = true; });
+
+    const el = new mod.PLElement(URL_UNDER_TEST, document.querySelector('#list'));
+
+    await assert.rejects(
+        () => el.POST('<li id="added">added</li>'),
+        /body stream truncated/,
+        'the failure must still reach the caller',
+    );
+    assert.equal(completed, true,
+        'completion must be announced even when finalization throws, or the ' +
+        'echo-suppression entry is orphaned');
+});
+
 test('a failed POST does not append, and still reports completion', async () => {
     const { document, mod } = await setupPrimitives(
         '<ul id="list"></ul>',

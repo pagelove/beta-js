@@ -297,23 +297,30 @@ class PLElement {
     if (etag) this.element.etag = etag;
 
     let result = response;
-    if (finalize) {
-      const finalized = await finalize(response);
-      if (finalized !== undefined) result = finalized;
+    try {
+      if (finalize) {
+        const finalized = await finalize(response);
+        if (finalized !== undefined) result = finalized;
+      }
+    } finally {
+      // Announced in a finally so that a finalize that throws — an unreadable
+      // or malformed response body, say — still ends the operation. Otherwise
+      // the entry PLMethodStarted added to the SSE echo-suppression queue is
+      // orphaned, and goes on discarding matching mutations until it ages out.
+      // The error itself still propagates to the caller.
+      this.element.dispatchEvent(
+        new CustomEvent("PLMethodCompleted", {
+          detail: {
+            method: request.method,
+            selector,
+            response,
+          },
+          bubbles: true,
+          composed: true,
+          cancelable: true,
+        }),
+      );
     }
-
-    this.element.dispatchEvent(
-      new CustomEvent("PLMethodCompleted", {
-        detail: {
-          method: request.method,
-          selector,
-          response,
-        },
-        bubbles: true,
-        composed: true,
-        cancelable: true,
-      }),
-    );
     return result;
   }
 
