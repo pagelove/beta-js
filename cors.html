@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Response processors</title>
+</head>
+<body>
+  <!--
+    Let any origin import the library.
+
+    This library is loaded by pages that are almost never served from this
+    host, so the import is cross-origin. A browser blocks a cross-origin
+    module unless the response says otherwise, and the failure is not subtle:
+    the import throws and nothing downstream of it runs.
+
+    The edge proxy does emit CORS headers, but only for this host's own
+    canonical name and declared aliases. That mechanism is for one host served
+    under several names, not for letting other sites read this one.
+
+    WHY THIS THROWS RATHER THAN SETTING A HEADER
+
+    The obvious form is Context.response.headers.set(...), which the reference
+    documents. It does not work, two ways over:
+
+      - .set is not a Sessel function ("unknown function: set"), and index
+        assignment fails too ("invalid assignment target")
+      - more fundamentally, header writes are never applied. The processor
+        executor's apply_response_changes reads back only status and body, so
+        a header write is dropped in silence even when it parses
+
+    Throwing an HTTPResponse takes a different path, one that does carry
+    headers. Reading Context.response.body first means the stored file is
+    still what is served, so this adds a header rather than replacing the
+    module with a copy that would have to be kept in step.
+
+    Status is carried through rather than hardcoded to 200, so a missing
+    module still answers with its real status.
+
+    The status filter keeps this to successful responses. Without it a 404
+    would be relabelled text/javascript, which would turn a missing file into
+    a syntax error in the importing page and hide the real cause.
+
+    Remove this file once header writes work, and go back to a one-line
+    processor. Reported as a bug against dombase.
+  -->
+  <div itemscope itemtype="https://pagelove.org/Processor">
+    <meta itemprop="resource" content="/pagelove.mjs">
+    <meta itemprop="resource" content="/pagelove/*">
+    <meta itemprop="method" content="GET">
+    <meta itemprop="status" content="2xx">
+    <div itemprop="action" itemscope itemtype="https://pagelove.org/Sessel">
+      <script itemprop="source" type="text/sessel">
+        @schema Context url("https://pagelove.org/Context");
+        @schema HTTPResponse url("https://pagelove.org/HTTPResponse");
+        @schema Pair url("https://pagelove.org/Pair");
+        throw new HTTPResponse {
+          status: Context.response.status,
+          body: Context.response.body,
+          header: new Pair { key: "Access-Control-Allow-Origin", value: "*" },
+          header: new Pair { key: "Content-Type", value: "text/javascript" }
+        }
+      </script>
+    </div>
+  </div>
+</body>
+</html>

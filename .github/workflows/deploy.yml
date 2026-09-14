@@ -74,11 +74,14 @@ jobs:
           fi
 
       # A module that uploaded badly still answers 200, so check what the host
-      # actually serves rather than trusting the PUT status codes.
-      - name: Verify what the host serves
+      # actually serves rather than trusting the PUT status codes. This reads
+      # the public host anonymously, because that is what a browser importing
+      # the library sees — including whether CORS lets it read the response.
+      - name: Verify what a browser gets
         env:
           PAGELOVE_WEBDAV_URL: ${{ vars.PAGELOVE_WEBDAV_URL }}
-          PAGELOVE_API_KEY: ${{ secrets.PAGELOVE_API_KEY }}
+          # Optional. Derived from the WebDAV URL when unset.
+          PAGELOVE_PUBLIC_URL: ${{ vars.PAGELOVE_PUBLIC_URL }}
         run: |
           set -euo pipefail
           chmod +x .github/scripts/verify-deploy.sh
