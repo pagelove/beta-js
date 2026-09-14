@@ -15,13 +15,13 @@ on:
 # One deploy at a time, and never cancel one mid-flight — a half-applied sync
 # leaves the host serving a mixture of two commits.
 concurrency:
-  group: pagelove-deploy-prod
+  group: pagelove-deploy-Production
   cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment: prod
+    environment: Production
     permissions:
       contents: read
     steps:
