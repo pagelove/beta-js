@@ -1,8 +1,8 @@
 /**
  * Browser environment for testing `pagelove/primitives.mjs` under Node.
  *
- * Requires the resolve hook in ./register.mjs to be installed (the module
- * imports dom-subscriber from an https: specifier Node cannot resolve).
+ * Requires the resolve hook in ./register.mjs to be installed (it swaps the
+ * vendored dom-subscriber module for a stub jsdom can cope with).
  */
 import { JSDOM } from 'jsdom';
 

@@ -1,4 +1,4 @@
-import { DOMSubscriber } from "https://cdn.pagelove.net/js/dom-subscriber/cde4007/index.mjs";
+import { DOMSubscriber } from "./dom-subscriber.mjs";
 import { Pagelove as Debug } from "./debug.mjs";
 
 /**
