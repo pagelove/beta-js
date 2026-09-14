@@ -1,18 +1,21 @@
 /**
- * Module resolve hook: redirect the CDN-hosted dom-subscriber import to a
- * local stub so `primitives.mjs` can be imported under Node.
+ * Module resolve hook: redirect the vendored dom-subscriber module to a local
+ * stub, so tests exercise `primitives.mjs` on its own.
  *
- * Node does not resolve https: import specifiers, so without this the module
- * cannot be loaded at all — and therefore cannot be tested.
+ * The real module drives a MutationObserver and reads `self.customElements`,
+ * neither of which the jsdom environment in ./primitives-env.mjs provides. The
+ * stub records the subscriptions primitives.mjs asks for and nothing else.
  */
-const REMOTE_PREFIX = 'https://cdn.pagelove.net/js/dom-subscriber/';
+const VENDORED_PATH = '/pagelove/dom-subscriber.mjs';
 
 export async function resolve(specifier, context, nextResolve) {
-    if (specifier.startsWith(REMOTE_PREFIX)) {
+    const resolved = await nextResolve(specifier, context);
+    if (new URL(resolved.url).pathname.endsWith(VENDORED_PATH)) {
         return {
+            ...resolved,
             url: new URL('./stubs/dom-subscriber.mjs', import.meta.url).href,
             shortCircuit: true,
         };
     }
-    return nextResolve(specifier, context);
+    return resolved;
 }

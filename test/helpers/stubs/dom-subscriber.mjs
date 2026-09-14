@@ -1,9 +1,9 @@
 /**
- * Stand-in for the CDN-hosted dom-subscriber module.
+ * Stand-in for ../../../pagelove/dom-subscriber.mjs.
  *
- * `primitives.mjs` imports it from an https: specifier, which Node cannot
- * resolve. The loader hook in ../loader.mjs redirects that specifier here.
- * Only the surface primitives.mjs actually uses is provided.
+ * The resolve hook in ../loader.mjs redirects the vendored module here, so a
+ * test can import primitives.mjs without a live MutationObserver. Only the
+ * surface primitives.mjs actually uses is provided.
  */
 export const DOMSubscriber = {
     calls: [],
