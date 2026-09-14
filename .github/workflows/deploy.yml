@@ -1,6 +1,7 @@
-name: Deploy to Pagelove
+name: Deploy
 
-# Pushing to prod publishes the library to the Pagelove host.
+# Pushing to prod publishes the library to two places: GitHub Pages, which is
+# where browsers import it from, and the Pagelove host.
 # Promote by pushing main to prod: git push origin main:prod
 on:
   push:
@@ -19,7 +20,67 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  # Runs once, and both publish jobs depend on it. Running the suite here
+  # rather than trusting main means a direct push to prod cannot skip it.
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci && npm test
+
+  # Publishing to Pages and publishing to Pagelove are deliberately separate
+  # jobs rather than steps in one. They are independent destinations, so a
+  # problem reaching one must not stop the other being updated.
+  pages:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+
+      # Publish the library only. Everything else in the repo is tooling, and
+      # the site is public, so there is no reason to put it there.
+      - name: Stage the library
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          cp LICENSE pagelove.mjs _site/
+          cp -R pagelove _site/pagelove
+          find _site -type f | sort
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+      # Pages serves every asset with Access-Control-Allow-Origin, so this is
+      # the copy a page on another origin can actually import.
+      - name: Verify what a browser gets
+        env:
+          PAGELOVE_WEBDAV_URL: ${{ vars.PAGELOVE_WEBDAV_URL }}
+          PAGELOVE_PUBLIC_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          set -euo pipefail
+          chmod +x .github/scripts/verify-deploy.sh
+          .github/scripts/verify-deploy.sh
+
+  pagelove:
+    needs: test
     runs-on: ubuntu-latest
     environment: Production
     permissions:
@@ -32,12 +93,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-
-      # The library ships to the host, so it has to be correct before it goes.
-      # Running the suite here rather than trusting main means a direct push to
-      # prod cannot skip it.
-      - name: Test
-        run: npm ci && npm test
 
       - name: Sync to WebDAV
         env:
@@ -74,14 +129,17 @@ jobs:
           fi
 
       # A module that uploaded badly still answers 200, so check what the host
-      # actually serves rather than trusting the PUT status codes. This reads
-      # the public host anonymously, because that is what a browser importing
-      # the library sees — including whether CORS lets it read the response.
-      - name: Verify what a browser gets
+      # actually serves rather than trusting the PUT status codes.
+      #
+      # CORS is not required here. This host cannot add the header without
+      # corrupting the file, so Pages is the copy that browsers import. The
+      # check still asserts the bytes are served, typed and parseable.
+      - name: Verify what the host serves
         env:
           PAGELOVE_WEBDAV_URL: ${{ vars.PAGELOVE_WEBDAV_URL }}
           # Optional. Derived from the WebDAV URL when unset.
           PAGELOVE_PUBLIC_URL: ${{ vars.PAGELOVE_PUBLIC_URL }}
+          REQUIRE_CORS: '0'
         run: |
           set -euo pipefail
           chmod +x .github/scripts/verify-deploy.sh
@@ -94,7 +152,7 @@ jobs:
           STATUS: ${{ job.status }}
         run: |
           {
-            echo "### Deploy ${STATUS}"
+            echo "### Pagelove deploy ${STATUS}"
             echo ""
             echo "- Host: \`${PAGELOVE_WEBDAV_URL:-(unset)}\`"
             echo "- Commit: \`${GITHUB_SHA:0:12}\`"
