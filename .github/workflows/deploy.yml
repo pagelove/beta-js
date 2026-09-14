@@ -1,0 +1,98 @@
+name: Deploy to Pagelove
+
+# Pushing to prod publishes the library to the Pagelove host.
+# Promote by pushing main to prod: git push origin main:prod
+on:
+  push:
+    branches: [prod]
+  workflow_dispatch:
+    inputs:
+      full_sync:
+        description: 'Upload every file, not just what changed'
+        type: boolean
+        default: false
+
+# One deploy at a time, and never cancel one mid-flight — a half-applied sync
+# leaves the host serving a mixture of two commits.
+concurrency:
+  group: pagelove-deploy-Production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: Production
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need history to diff against the previous commit
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The library ships to the host, so it has to be correct before it goes.
+      # Running the suite here rather than trusting main means a direct push to
+      # prod cannot skip it.
+      - name: Test
+        run: npm ci && npm test
+
+      - name: Sync to WebDAV
+        env:
+          # The WebDAV URL is an environment variable; the API key is a secret.
+          PAGELOVE_WEBDAV_URL: ${{ vars.PAGELOVE_WEBDAV_URL }}
+          PAGELOVE_API_KEY: ${{ secrets.PAGELOVE_API_KEY }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+          EVENT: ${{ github.event_name }}
+          FULL_SYNC: ${{ inputs.full_sync }}
+        run: |
+          set -euo pipefail
+          chmod +x .github/scripts/sync-webdav.sh
+
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            if [ "$FULL_SYNC" = "true" ]; then
+              .github/scripts/sync-webdav.sh --all
+            else
+              .github/scripts/sync-webdav.sh "${SHA}^" "$SHA"
+            fi
+            exit 0
+          fi
+
+          # prod maps to exactly one host, so the previous commit on prod is
+          # what that host already has. A first push, or a force-push whose old
+          # commit is gone, has no such anchor — fall back to a full sync
+          # rather than guessing at a diff.
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            echo "No usable previous commit; falling back to a full sync."
+            .github/scripts/sync-webdav.sh --all
+          else
+            .github/scripts/sync-webdav.sh "$BEFORE" "$SHA"
+          fi
+
+      # A module that uploaded badly still answers 200, so check what the host
+      # actually serves rather than trusting the PUT status codes.
+      - name: Verify what the host serves
+        env:
+          PAGELOVE_WEBDAV_URL: ${{ vars.PAGELOVE_WEBDAV_URL }}
+          PAGELOVE_API_KEY: ${{ secrets.PAGELOVE_API_KEY }}
+        run: |
+          set -euo pipefail
+          chmod +x .github/scripts/verify-deploy.sh
+          .github/scripts/verify-deploy.sh
+
+      - name: Summarise
+        if: always()
+        env:
+          PAGELOVE_WEBDAV_URL: ${{ vars.PAGELOVE_WEBDAV_URL }}
+          STATUS: ${{ job.status }}
+        run: |
+          {
+            echo "### Deploy ${STATUS}"
+            echo ""
+            echo "- Host: \`${PAGELOVE_WEBDAV_URL:-(unset)}\`"
+            echo "- Commit: \`${GITHUB_SHA:0:12}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
