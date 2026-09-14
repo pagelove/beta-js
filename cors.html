@@ -7,56 +7,63 @@
   <!--
     Let any origin import the library.
 
-    This library is loaded by pages that are almost never served from this
-    host, so the import is cross-origin. A browser blocks a cross-origin
-    module unless the response says otherwise, and the failure is not subtle:
-    the import throws and nothing downstream of it runs.
+    Pages that import this library are almost never served from this host, so
+    the import is cross-origin. A browser blocks a cross-origin module unless
+    the response says otherwise, and the failure is not subtle: the import
+    throws and nothing downstream of it runs.
 
     The edge proxy does emit CORS headers, but only for this host's own
     canonical name and declared aliases. That mechanism is for one host served
     under several names, not for letting other sites read this one.
 
-    WHY THIS THROWS RATHER THAN SETTING A HEADER
+    WHY THIS IS A JAVASCRIPT ACTION AND NOT A SESSEL ONE
 
-    The obvious form is Context.response.headers.set(...), which the reference
-    documents. It does not work, two ways over:
+    Setting a header on the response does not work at all. Context.response
+    .headers.set is not a Sessel function, index assignment is not a valid
+    assignment target, and header writes are dropped anyway because the
+    processor executor reads back only status and body. So the header has to
+    arrive by throwing an HTTPResponse, which takes a path that carries them.
 
-      - .set is not a Sessel function ("unknown function: set"), and index
-        assignment fails too ("invalid assignment target")
-      - more fundamentally, header writes are never applied. The processor
-        executor's apply_response_changes reads back only status and body, so
-        a header write is dropped in silence even when it parses
+    The obvious way to do that is a Sessel action, and it does attach the
+    header. But it corrupts the file. Rethrowing the body through Sessel
+    serialises the string as HTML, so a module comes back with => as =&gt;
+    and && as &amp;&amp;, which is a syntax error at the first arrow function.
+    That is fine for an HTML document, where escaping round-trips, and wrong
+    for anything else. These files are stored as byte-for-byte blobs.
 
-    Throwing an HTTPResponse takes a different path, one that does carry
-    headers. Reading Context.response.body first means the stored file is
-    still what is served, so this adds a header rather than replacing the
-    module with a copy that would have to be kept in step.
+    A JavaScript action carries headers as a plain object on the thrown value
+    and passes the body through as a string, so the bytes survive.
 
-    Status is carried through rather than hardcoded to 200, so a missing
-    module still answers with its real status.
+    Note that a JavaScript action cannot mutate ctx.response in place. It runs
+    the same evaluation path as a when gate, which does not detect writes, so
+    assigning to ctx.response is silently ignored. Throwing is the only way.
 
     The status filter keeps this to successful responses. Without it a 404
-    would be relabelled text/javascript, which would turn a missing file into
-    a syntax error in the importing page and hide the real cause.
+    would be relabelled text/javascript, turning a missing file into a syntax
+    error in the importing page and hiding the real cause.
 
-    Remove this file once header writes work, and go back to a one-line
-    processor. Reported as a bug against dombase.
+    Content-Type is set explicitly because throwing replaces the response, so
+    the stored type is not carried over. Every path matched here is a module,
+    which is why one hardcoded type is safe. Adding a non-module file under
+    /pagelove/ would break that assumption.
   -->
   <div itemscope itemtype="https://pagelove.org/Processor">
     <meta itemprop="resource" content="/pagelove.mjs">
     <meta itemprop="resource" content="/pagelove/*">
     <meta itemprop="method" content="GET">
     <meta itemprop="status" content="2xx">
-    <div itemprop="action" itemscope itemtype="https://pagelove.org/Sessel">
-      <script itemprop="source" type="text/sessel">
-        @schema Context url("https://pagelove.org/Context");
-        @schema HTTPResponse url("https://pagelove.org/HTTPResponse");
-        @schema Pair url("https://pagelove.org/Pair");
-        throw new HTTPResponse {
-          status: Context.response.status,
-          body: Context.response.body,
-          header: new Pair { key: "Access-Control-Allow-Origin", value: "*" },
-          header: new Pair { key: "Content-Type", value: "text/javascript" }
+    <div itemprop="action" itemscope itemtype="https://pagelove.org/JavaScript/Module">
+      <script type="module" itemprop="source">
+        export default function (ctx) {
+          throw {
+            schema_url: "https://pagelove.org/HTTPResponse",
+            status: ctx.response.status,
+            body: ctx.response.body,
+            headers: {
+              "Access-Control-Allow-Origin": "*",
+              "Content-Type": "text/javascript"
+            }
+          };
         }
       </script>
     </div>
