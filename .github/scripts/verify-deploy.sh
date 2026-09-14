@@ -13,6 +13,7 @@
 # Asserts, per module:
 #   - the host returns 200
 #   - it sends Access-Control-Allow-Origin, so a cross-origin import works
+#     (skipped when REQUIRE_CORS=0, for a host that cannot send one)
 #   - it serves the file as JavaScript
 #   - the bytes it serves actually parse
 #
@@ -22,6 +23,7 @@
 # Environment:
 #   PAGELOVE_WEBDAV_URL   WebDAV endpoint
 #   PAGELOVE_PUBLIC_URL   public host; derived from the WebDAV URL if unset
+#   REQUIRE_CORS          1 by default; 0 skips the CORS assertion
 #
 set -euo pipefail
 
@@ -67,7 +69,9 @@ while IFS= read -r path; do
   fi
 
   acao=$(tr -d '\r' < "$headers" | awk -F': ' 'tolower($1)=="access-control-allow-origin"{print $2}' | tail -1)
-  if [ -z "$acao" ]; then
+  if [ "${REQUIRE_CORS:-1}" = "0" ]; then
+    acao="${acao:-not required}"
+  elif [ -z "$acao" ]; then
     echo "  FAIL   ${path} -> no Access-Control-Allow-Origin; a cross-origin import will be blocked" >&2
     failures=$((failures + 1))
     continue
