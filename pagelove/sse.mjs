@@ -5,6 +5,11 @@
  * mutation events, applies them to the live DOM, and dispatches custom events
  * for observability.
  *
+ * A pagelove-connection handshake identifies the current protocol, where the
+ * server suppresses originating writes. Older streams without this handshake
+ * retain the local echo guard; their method/selector heuristic cannot reliably
+ * distinguish a concurrent remote write from an echo.
+ *
  * Usage:
  *   import { PageloveSSE } from './index.mjs';
  *   const sse = new PageloveSSE();            // subscribe to current page
@@ -28,6 +33,7 @@ class PageloveSSE {
     #source;
     #url;
     #pendingEchoes = [];
+    #serverSuppressesEchoes = false;
 
     /**
      * @param {string} [url=window.location.href] — document URL to subscribe to
@@ -42,7 +48,17 @@ class PageloveSSE {
         Pagelove.log(Pagelove.SSE, '[PLSSE] connecting to', this.#url);
 
         this.#source.addEventListener('open', () => {
+            this.#serverSuppressesEchoes = false;
             Pagelove.log(Pagelove.SSE, '[PLSSE] open');
+        });
+
+        this.#source.addEventListener('pagelove-connection', (event) => {
+            if (typeof event.data !== 'string' || !event.data.trim()) return;
+            // The documented protocol excludes originating writes server-side.
+            // A method/selector match here could only discard another client's
+            // update, including when its request started before the handshake.
+            this.#serverSuppressesEchoes = true;
+            this.#pendingEchoes = [];
         });
 
         this.#source.addEventListener('mutation', (event) => {
@@ -73,11 +89,13 @@ class PageloveSSE {
         });
 
         this.#source.onerror = (e) => {
+            this.#serverSuppressesEchoes = false;
             Pagelove.warn(Pagelove.SSE, '[PLSSE] error (readyState=' + this.#source?.readyState + ')', e);
             // EventSource reconnects automatically; nothing to do here
         };
 
         document.addEventListener('PLMethodStarted', (event) => {
+            if (this.#serverSuppressesEchoes) return;
             this.#pendingEchoes.push({
                 method: event.detail.method.toUpperCase(),
                 selector: event.detail.selector,
